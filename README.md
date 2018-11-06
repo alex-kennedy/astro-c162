@@ -37,6 +37,7 @@ We have the infrastructure for running reproducible simulations and saving the r
     - Do we make the asteroids affect the planets?
     - Range of semi-major axes for asteroids?
     - Introduce inclination to asteroids also? 
+    - Incorporate in our reasonable guess for the planetary system parameters 
 - All post-processing of simulations
     - What do we mean by stable
     - Apply this definition to our system
