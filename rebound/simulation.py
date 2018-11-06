@@ -170,7 +170,7 @@ def new_test_particles(a_min, a_max, n):
         np.random.uniform(a_min, a_max, n),
         np.random.uniform(0, 2*np.pi, n)
     ])
-    return particles
+    return particles.T
 
 
 def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_interval, dt=1e-3):
