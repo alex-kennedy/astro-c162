@@ -10,6 +10,11 @@ from tqdm import tqdm
 
 import rebound
 
+try:
+    from IPython.display import display
+except ImportError:
+    pass
+
 M_SUN = 1.988435e30 # kg
 M_JUP = 1.89813e27 # kg
 
@@ -53,12 +58,14 @@ def impute_inclination_mass(planets):
         pandas.DataFrame: dataframe of same form as input
     """
     # Impute inclinations
-    planets['pl_orbincl'] -= planets['pl_orbincl'].mean()
-    planets['pl_orbincl'] = planets['pl_orbincl'].fillna(0)
+    planets['pl_orbincl'] = planets['pl_orbincl'].fillna(planets['pl_orbincl'].mean())
     
     # Adjust Msini masses
     indices = planets['pl_bmassprov'] == 'Msini'
     planets.loc[indices, 'pl_bmassj'] /= np.sin(planets[indices]['pl_orbincl'] * np.pi / 180)
+
+    # Offset so inclination is 0
+    planets['pl_orbincl'] -= planets['pl_orbincl'].mean()
 
     return planets
 
@@ -144,12 +151,14 @@ def prepare_simulation(planets, star, particles, dt=1e-3, integrator='whfast'):
         sim.add(m=m, a=a, e=e, inc=i, Omega=big_omega, omega=omega_bar-big_omega, f=true_anomaly)
 
     for i in range(len(particles)):
-        sim.add(a=particles[i,0], f=particles[i,1])
+        sim.add(m=0, a=particles[i,0], f=particles[i,1])
     
     sim.move_to_com() 
     sim.integrator = integrator
     sim.dt = dt
     sim.N_active = len(planets) + 1 # massive bodies are planets + star
+    sim.ri_whfast.safe_mode = 0
+    sim.ri_whfast.corrector = 11
 
     return sim
 
@@ -187,7 +196,7 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
         dt (float): timestep for integration
     """
     # Set up an integration progress bar
-    progress_bar = tqdm(total=t_final*5/dt)
+    progress_bar = tqdm(total=t_final*(t_final/2)/dt)
     def heartbeat(sim):
         progress_bar.update(sim.contents.t)
 
@@ -249,4 +258,4 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
 
 if __name__ == '__main__':
     # Quick example
-    new_experiment('data/manual/hd-219134.csv', 0.24, 0.37, 100, 10, 2, 0.5e-3)
+    new_experiment('data/manual/hd-219134.csv', 0.24, 0.37, 10, 1000, 10, 1e-3)
