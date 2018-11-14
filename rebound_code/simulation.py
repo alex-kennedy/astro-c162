@@ -213,6 +213,11 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
         snapshot_interval (float): time interval between archiving simulations
         dt (float): timestep for integration
     """
+    # Set up an integration progress bar
+    progress_bar = tqdm(total=t_final)
+    def heartbeat(sim):
+        progress_bar.update(dt)
+
     # Make a folder for the experiment
     start_time = datetime.utcnow()
     dir_name = os.path.join('data', 'simulations', start_time.strftime('%Y-%m-%d %H-%M-%S'))
@@ -253,14 +258,10 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
     planets.to_csv(os.path.join(dir_name, 'init', 'planets.csv'))
     pd.DataFrame({'a': particles[:,0], 'f': particles[:,1]}).to_csv(os.path.join(dir_name, 'init', 'particles.csv'))
 
-    # Set up an integration progress bar
-    progress_bar = tqdm(total=int(t_final)*100)
-
     # Finish setting up simulation and get the show on the road
+    simulation.heartbeat = heartbeat
     simulation.automateSimulationArchive(os.path.join(dir_name, 'sim_archive.bin'), interval=snapshot_interval)
-    for t in np.linspace(0, t_final, int(t_final)*100):
-        simulation.integrate(t, exact_finish_time=0)
-        progress_bar.update(1)
+    simulation.integrate(t_final, exact_finish_time=0)
 
     progress_bar.close()
 
@@ -275,5 +276,5 @@ if __name__ == '__main__':
     # def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_interval, dt=1e-3)
 
     # Quick example
-    new_experiment('data/manual/hd-219134.csv', 0.24, 0.37, 10, 1000, 10, 5e-5)
+    new_experiment('data/manual/hd-219134.csv', 0.24, 0.37, 10, 10, 10, 5e-5)
     # new_experiment('data/manual/hd-219134.csv', 0.24, 0.37, 10000, 100, 10, 5e-5)
