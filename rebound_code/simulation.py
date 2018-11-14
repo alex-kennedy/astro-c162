@@ -10,11 +10,6 @@ from tqdm import tqdm
 
 import rebound
 
-try:
-    from IPython.display import display
-except ImportError:
-    pass
-
 M_SUN = 1.988435e30 # kg
 M_JUP = 1.89813e27 # kg
 
@@ -72,6 +67,8 @@ def impute_inclination_mass(planets):
 
 def non_dimensionalise_masses(planets, star):
     """
+    DON'T USE - THE UNITS ARE INCORRECT
+
     We set the mass of the star to 1000 base the planet masses off of this value.
 
     Returns:
@@ -87,6 +84,27 @@ def non_dimensionalise_masses(planets, star):
     planets['pl_mass_nondimensioned'] = m_planets / conversion_factor
 
     return planets, star, conversion_factor
+
+
+def convert_units(planets):
+    """
+    We will be using units where G = 1. Specifically where masses are in units
+    of masses in M_SUN, distances in AU, and time in yr/2pi. 
+
+    Args:
+        planets (pandas.DataFrame): dataframe of planets to change
+
+    Returns:
+        pandas.DataFrame: adjusted planets dataframe
+    """
+
+    # Change masses from M_JUP to M_SUN
+    planets['pl_mass_nondimensioned'] = planets['pl_bmassj'] * M_JUP / M_SUN
+
+    # Change orbital period from days to yr/2pi
+    planets['pl_orbper'] *= (2*np.pi / 365.25)
+
+    return planets
     
 
 def calculate_start_positions(planets):
@@ -136,7 +154,7 @@ def prepare_simulation(planets, star, particles, dt=1e-3, integrator='whfast'):
     sim = rebound.Simulation()
 
     # Add star
-    sim.add(m=star['st_mass_nondimensioned'])
+    sim.add(m=star['st_mass'])
 
     # Add planets
     for i, p in planets.iterrows():
@@ -146,7 +164,7 @@ def prepare_simulation(planets, star, particles, dt=1e-3, integrator='whfast'):
         i = p['pl_orbincl'] * (np.pi / 180) # inclination
         omega_bar = p['pl_orblper'] * (np.pi / 180) # longitude of periastron
         true_anomaly = p['true_anomaly'] * (np.pi / 180)
-        big_omega = 0 * (np.pi / 180) # wtf, no idea. maybe from ang sep??? Maybe we can just assume it to be zero??
+        big_omega = 0 * (np.pi / 180) # need to write up why this is fine
 
         sim.add(m=m, a=a, e=e, inc=i, Omega=big_omega, omega=omega_bar-big_omega, f=true_anomaly)
 
@@ -157,7 +175,7 @@ def prepare_simulation(planets, star, particles, dt=1e-3, integrator='whfast'):
     sim.integrator = integrator
     sim.dt = dt
     sim.N_active = len(planets) + 1 # massive bodies are planets + star
-    sim.ri_whfast.safe_mode = 0
+    sim.ri_whfast.safe_mode = 0 # yea im cool
     sim.ri_whfast.corrector = 11
 
     return sim
@@ -195,11 +213,6 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
         snapshot_interval (float): time interval between archiving simulations
         dt (float): timestep for integration
     """
-    # Set up an integration progress bar
-    progress_bar = tqdm(total=t_final*(t_final/2)/dt)
-    def heartbeat(sim):
-        progress_bar.update(sim.contents.t)
-
     # Make a folder for the experiment
     start_time = datetime.utcnow()
     dir_name = os.path.join('data', 'simulations', start_time.strftime('%Y-%m-%d %H-%M-%S'))
@@ -222,13 +235,11 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
 
     planets, star = load_planet_system(system_file)
     planets = impute_inclination_mass(planets)
-    planets, star, mass_conversion = non_dimensionalise_masses(planets, star)
+    planets = convert_units(planets)
     planets = calculate_start_positions(planets)
     particles = new_test_particles(a_min, a_max, n_particles)
 
     simulation = prepare_simulation(planets, star, particles, dt)
-
-    info['mass_conversion'] = mass_conversion
 
     # Save the info dictionary
     with open(os.path.join(dir_name, 'info.json'), 'w') as f:
@@ -242,10 +253,14 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
     planets.to_csv(os.path.join(dir_name, 'init', 'planets.csv'))
     pd.DataFrame({'a': particles[:,0], 'f': particles[:,1]}).to_csv(os.path.join(dir_name, 'init', 'particles.csv'))
 
+    # Set up an integration progress bar
+    progress_bar = tqdm(total=int(t_final)*100)
+
     # Finish setting up simulation and get the show on the road
-    simulation.heartbeat = heartbeat
     simulation.automateSimulationArchive(os.path.join(dir_name, 'sim_archive.bin'), interval=snapshot_interval)
-    simulation.integrate(t_final)
+    for t in np.linspace(0, t_final, int(t_final)*100):
+        simulation.integrate(t, exact_finish_time=0)
+        progress_bar.update(1)
 
     progress_bar.close()
 
@@ -257,5 +272,8 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
 
 
 if __name__ == '__main__':
+    # def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_interval, dt=1e-3)
+
     # Quick example
-    new_experiment('data/manual/hd-219134.csv', 0.24, 0.37, 10, 1000, 10, 1e-3)
+    new_experiment('data/manual/hd-219134.csv', 0.24, 0.37, 10, 1000, 10, 5e-5)
+    # new_experiment('data/manual/hd-219134.csv', 0.24, 0.37, 10000, 100, 10, 5e-5)
