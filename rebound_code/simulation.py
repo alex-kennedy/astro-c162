@@ -253,7 +253,7 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
 
     # Make a folder for the experiment
     start_time = datetime.utcnow()
-    dir_name = os.path.join('data', 'simulations', start_time.strftime('%Y-%m-%d %H-%M-%S'))
+    dir_name = os.path.join('data', 'simulations', start_time.strftime('%Y-%m-%d_%H-%M-%S'))
     os.mkdir(dir_name)
 
     # Check git version
