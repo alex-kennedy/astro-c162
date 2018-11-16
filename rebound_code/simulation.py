@@ -136,7 +136,7 @@ def calculate_start_positions(planets):
     return planets
 
 
-def prepare_simulation(planets, star, particles, dt=1e-3, integrator='whfast'):
+def prepare_simulation(planets, star, particles, dt=1e-3, max_d=None, integrator='whfast'):
     """
     Create and prepare the Rebound simualation object
 
@@ -146,6 +146,7 @@ def prepare_simulation(planets, star, particles, dt=1e-3, integrator='whfast'):
         particles (numpy.ndarray): particles dataframe with first column being semi major axis,
             second column being true anomaly at start
         dt (float): integration timestep
+        max_d (float): maximum distance before escape
         integrator (str): integration algorithm, see REBOUND docs 
 
     Returns:
@@ -154,7 +155,7 @@ def prepare_simulation(planets, star, particles, dt=1e-3, integrator='whfast'):
     sim = rebound.Simulation()
 
     # Add star
-    sim.add(m=star['st_mass'])
+    sim.add(m=star['st_mass'], hash='star')
 
     # Add planets
     for i, p in planets.iterrows():
@@ -165,11 +166,12 @@ def prepare_simulation(planets, star, particles, dt=1e-3, integrator='whfast'):
         omega_bar = p['pl_orblper'] * (np.pi / 180) # longitude of periastron
         true_anomaly = p['true_anomaly'] * (np.pi / 180)
         big_omega = 0 * (np.pi / 180) # need to write up why this is fine
+        pl_hash = p['pl_letter']
 
-        sim.add(m=m, a=a, e=e, inc=i, Omega=big_omega, omega=omega_bar-big_omega, f=true_anomaly)
+        sim.add(m=m, a=a, e=e, inc=i, Omega=big_omega, omega=omega_bar-big_omega, f=true_anomaly, hash=pl_hash)
 
     for i in range(len(particles)):
-        sim.add(m=0, a=particles[i,0], f=particles[i,1])
+        sim.add(m=0, a=particles[i,0], f=particles[i,1], inc=particles[i,2], hash=i)
     
     sim.move_to_com() 
     sim.integrator = integrator
@@ -178,10 +180,13 @@ def prepare_simulation(planets, star, particles, dt=1e-3, integrator='whfast'):
     sim.ri_whfast.safe_mode = 0 # yea im cool
     sim.ri_whfast.corrector = 11
 
+    if max_d:
+        sim.exit_max_distance = max_d
+
     return sim
 
 
-def new_test_particles(a_min, a_max, n):
+def new_test_particles(a_min, a_max, delta_inc, n):
     """
     Generates needed values for test particles. Uniform distribution between
     a_min and a_max and true anomaly between 0 and 2pi. 
@@ -189,18 +194,44 @@ def new_test_particles(a_min, a_max, n):
     Args:
         a_min (float): minimum radius
         a_max (float): maximum radius
+        delta_inc (float): plus/minus value for the uniform distribution from which to draw
+            test particle inclinations
         n (int): number of particles to generate
     Return:
-        np.ndarray: array of dimentions (n, 2)
+        np.ndarray: array of dimensions (n, 2)
     """
     particles = np.array([
         np.random.uniform(a_min, a_max, n),
-        np.random.uniform(0, 2*np.pi, n)
+        np.random.uniform(0, 2*np.pi, n),
+        np.random.uniform(-delta_inc, delta_inc, n)
     ])
     return particles.T
 
 
-def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_interval, dt=1e-3):
+def remove_escaped_particles(sim, d_removed_particles=None, max_d=100, progress_bar=None):
+    sim.integrator_synchronize()
+
+    coords = np.array([[p.x, p.y, p.z] for p in sim.particles])
+    escaped = np.sqrt(np.sum(coords**2, axis=1)) > max_d
+
+    particles_to_remove = []
+    [particles_to_remove.append(sim.particles[i].hash) if remove else None for i, remove in enumerate(escaped)]
+
+    for p_hash in particles_to_remove:
+        if d_removed_particles is not None:
+            p = sim.particles[p_hash]
+            d_removed_particles.append([p_hash.value, sim.t, p.x, p.y, p.z, p.e, p.a, p.inc, p.omega, p.Omega, p.f])
+            
+        sim.remove(hash=p_hash)
+
+    sim.ri_whfast.recalculate_jacobi_this_timestep = 1
+
+    plural = 'particle' if len(particles_to_remove) == 1 else 'particles'
+    message = 'Removed {} {} at time = {}'.format(len(particles_to_remove), plural, sim.t)
+    progress_bar.write(message) if progress_bar is not None else print(message)
+
+
+def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_interval, delta_inc, max_d=100, dt=1e-3):
     """
     Behemoth function to run one experiment and save all the results.
 
@@ -211,6 +242,8 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
         n_particles (int): number of test particles
         t_final (float): time to integrate up to (days)
         snapshot_interval (float): time interval between archiving simulations
+        delta_inc (float): plus/minus value for the uniform starting distribution of test inclinations
+        max_d (float): distance at which a particle is removed before archiving a simulation
         dt (float): timestep for integration
     """
     # Set up an integration progress bar
@@ -242,9 +275,9 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
     planets = impute_inclination_mass(planets)
     planets = convert_units(planets)
     planets = calculate_start_positions(planets)
-    particles = new_test_particles(a_min, a_max, n_particles)
+    particles = new_test_particles(a_min, a_max, delta_inc=delta_inc, n=n_particles)
 
-    simulation = prepare_simulation(planets, star, particles, dt)
+    simulation = prepare_simulation(planets, star, particles, dt=dt, max_d=max_d)
 
     # Save the info dictionary
     with open(os.path.join(dir_name, 'info.json'), 'w') as f:
@@ -256,14 +289,28 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
     except OSError:
         pass
     planets.to_csv(os.path.join(dir_name, 'init', 'planets.csv'))
-    pd.DataFrame({'a': particles[:,0], 'f': particles[:,1]}).to_csv(os.path.join(dir_name, 'init', 'particles.csv'))
+    pd.DataFrame(particles, columns=['a', 'f', 'inc']).to_csv(os.path.join(dir_name, 'init', 'particles.csv'))
+
+    # Start a list for the removed particles
+    d_removed_particles = []
 
     # Finish setting up simulation and get the show on the road
     simulation.heartbeat = heartbeat
     simulation.automateSimulationArchive(os.path.join(dir_name, 'sim_archive.bin'), interval=snapshot_interval)
-    simulation.integrate(t_final, exact_finish_time=0)
+
+    # Ensure escaped particles are removed
+    while True:
+        try:
+            simulation.integrate(t_final, exact_finish_time=0)
+            break
+        except rebound.Escape:
+            remove_escaped_particles(simulation, d_removed_particles, max_d, progress_bar)
 
     progress_bar.close()
+
+    # Save removed particles information
+    df_removed_particles = pd.DataFrame(d_removed_particles, columns=['i', 't', 'x', 'y', 'z', 'e', 'a', 'inc', 'omega', 'big_omega', 'f'])
+    df_removed_particles.to_csv(os.path.join(dir_name, 'init', 'removed_particles.csv'))
 
     # Resave info with completion
     info['complete'] = True
@@ -273,8 +320,18 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
 
 
 if __name__ == '__main__':
-    # def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_interval, dt=1e-3)
-
     # Quick example
-    new_experiment('data/manual/hd-219134.csv', 0.24, 0.37, 10, 10, 10, 5e-5)
-    # new_experiment('data/manual/hd-219134.csv', 0.24, 0.37, 10000, 100, 10, 5e-5)
+    # new_experiment('data/manual/hd-219134.csv', 4.9, 4.999, 100, 1000, 10, 5, 1e-3)
+    # new_experiment('data/manual/hd-219134.csv', 0.24, 0.37, 10000, 100, 10, 100, 5e-5)
+
+    new_experiment(
+        'data/manual/hd-219134.csv',
+        a_min=4.9,
+        a_max=4.999,
+        n_particles=100,
+        t_final=1000,
+        snapshot_interval=10,
+        delta_inc=1 * (np.pi/180),
+        max_d=100,
+        dt=1e-3
+    )
