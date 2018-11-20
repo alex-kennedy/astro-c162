@@ -208,7 +208,7 @@ def new_test_particles(a_min, a_max, delta_inc, n):
     return particles.T
 
 
-def remove_escaped_particles(sim, d_removed_particles=None, max_d=100, progress_bar=None):
+def record_escaped_particles(sim, d_removed_particles=None, max_d=100, progress_bar=None):
     sim.integrator_synchronize()
 
     coords = np.array([[p.x, p.y, p.z] for p in sim.particles])
@@ -218,17 +218,68 @@ def remove_escaped_particles(sim, d_removed_particles=None, max_d=100, progress_
     [particles_to_remove.append(sim.particles[i].hash) if remove else None for i, remove in enumerate(escaped)]
 
     for p_hash in particles_to_remove:
-        if d_removed_particles is not None:
-            p = sim.particles[p_hash]
-            d_removed_particles.append([p_hash.value, sim.t, p.x, p.y, p.z, p.e, p.a, p.inc, p.omega, p.Omega, p.f])
-            
-        sim.remove(hash=p_hash)
+        p = sim.particles[p_hash]
+        d_removed_particles.append([p_hash.value, sim.t, p.x, p.y, p.z, p.e, p.a, p.inc, p.omega, p.Omega, p.f])
 
     sim.ri_whfast.recalculate_jacobi_this_timestep = 1
 
     plural = 'particle' if len(particles_to_remove) == 1 else 'particles'
     message = 'Removed {} {} at time = {}'.format(len(particles_to_remove), plural, sim.t)
     progress_bar.write(message) if progress_bar is not None else print(message)
+
+
+def pickup_experiment(dir_name, snapshot_interval, extra_time=None, t_final=None):
+    """
+    A function to continue simulations where they leave off. Doesn't affect the info.json file,
+    so even if this does not complete, that will not be recognized in that file. Too lazy for DRY... 
+
+    Note: pass either extra_time or t_final.
+
+    Args:
+        dir_name (str): path to folder with sim_archive.bin file
+        snapshot_interval (float): interval to save simulations
+        extra_time (float): additional time to integrate on top on current sim time
+        t_final (float): final time to integrate to
+    """
+    simulation = rebound.Simulation.from_archive(os.path.join(dir_name, 'sim_archive.bin'))
+    
+    if extra_time and t_final:
+        raise ValueError('Can only set extra_time or t_final')
+    if not extra_time and not t_final:
+        raise ValueError('Must set either extra_time or t_final')
+
+    t_final = simulation.t + extra_time if extra_time else t_final
+    dt = simulation.dt
+    max_d = simulation.exit_max_distance
+
+    # Set up an integration progress bar
+    progress_bar = tqdm(total=t_final)
+    progress_bar.update(simulation.t)
+    def heartbeat(sim):
+        progress_bar.update(dt)
+    
+    # Start a list for the removed particles
+    d_removed_particles = []
+
+    # Finish setting up simulation and get the show on the road
+    simulation.heartbeat = heartbeat
+    simulation.automateSimulationArchive(os.path.join(dir_name, 'sim_archive.bin'), interval=snapshot_interval, deletefile=False)
+
+    # Ensure escaped particles are removed
+    while True:
+        try:
+            simulation.integrate(t_final, exact_finish_time=0)
+            break
+        except rebound.Escape:
+            record_escaped_particles(simulation, d_removed_particles, max_d, progress_bar)
+
+    progress_bar.close()
+
+    # Resave removed particles information
+    df_removed_particles = pd.read_csv(os.path.join(dir_name, 'init', 'removed_particles.csv'))
+    df_removed_particles_pickup =  pd.DataFrame(d_removed_particles, columns=['i', 't', 'x', 'y', 'z', 'e', 'a', 'inc', 'omega', 'big_omega', 'f'])
+    pd.concat([df_removed_particles, df_removed_particles_pickup], sort=False).to_csv(os.path.join(dir_name, 'init', 'removed_particles.csv'))
+
 
 
 def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_interval, delta_inc, max_d=100, dt=1e-3):
@@ -304,7 +355,7 @@ def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_int
             simulation.integrate(t_final, exact_finish_time=0)
             break
         except rebound.Escape:
-            remove_escaped_particles(simulation, d_removed_particles, max_d, progress_bar)
+            record_escaped_particles(simulation, d_removed_particles, max_d, progress_bar)
 
     progress_bar.close()
 

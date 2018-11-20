@@ -2,3 +2,4 @@
 data/simulations/*
 notebooks/*
 __pycache__
+.vscode
