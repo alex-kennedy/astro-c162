@@ -209,6 +209,15 @@ def new_test_particles(a_min, a_max, delta_inc, n):
 
 
 def record_escaped_particles(sim, d_removed_particles=None, max_d=100, progress_bar=None):
+    """
+    Should be called on a simulation particle escape exception. The escaped particles are
+    removed and information about the removal appended to d_removed_particles. 
+
+    Still having some issues with whats causing corruption of simulation files and I'm not
+    yet convinced it is certainly not this function. 
+
+    Args:
+        sim (rebound.Simulation): triggering simulation
     sim.integrator_synchronize()
 
     coords = np.array([[p.x, p.y, p.z] for p in sim.particles])
@@ -282,7 +291,7 @@ def pickup_experiment(dir_name, snapshot_interval, extra_time=None, t_final=None
 
 
 
-def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_interval, delta_inc, max_d=100, dt=1e-3):
+def new_experiment(system_file, a_min, a_max, n_particles, t_final, snapshot_interval, delta_inc, max_d=None, dt=1e-3):
     """
     Behemoth function to run one experiment and save all the results.
 
