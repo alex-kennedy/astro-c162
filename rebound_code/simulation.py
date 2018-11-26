@@ -218,6 +218,11 @@ def record_escaped_particles(sim, d_removed_particles=None, max_d=100, progress_
 
     Args:
         sim (rebound.Simulation): triggering simulation
+        d_removed_particles (list): info list to append to
+        max_d (float): escape distance, should be less than or equal to
+            sim.exit_max_distance
+        progress_bar (tqdm.tqdm): progress bar to print status updates more prettily
+    """
     sim.integrator_synchronize()
 
     coords = np.array([[p.x, p.y, p.z] for p in sim.particles])
@@ -386,12 +391,11 @@ if __name__ == '__main__':
 
     new_experiment(
         'data/manual/hd-219134.csv',
-        a_min=4.9,
-        a_max=4.999,
-        n_particles=100,
-        t_final=1000,
-        snapshot_interval=10,
+        a_min=0.2,
+        a_max=3.2,
+        n_particles=2000,
+        t_final=100,
+        snapshot_interval=5,
         delta_inc=1 * (np.pi/180),
-        max_d=100,
         dt=1e-3
     )
